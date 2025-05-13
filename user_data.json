@@ -1,0 +1,16 @@
+{
+    "name": "John Smith",
+    "email": "john.smith@example.com",
+    "mobile no": "9876543210",
+    "roll no": "221601069",
+    "date of birth": "01/01/2005",
+    "gender": "Male",
+    "Department": "Computer Science",
+    "year": "3",
+    "university": "Example Engineering College",
+    "address": "123 College Street",
+    "city": "Example City",
+    "state": "Example State",
+    "zip code": "123456",
+    "country": "India"
+} 

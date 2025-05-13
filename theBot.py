@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -11,6 +12,7 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 import numpy as np
 from datetime import datetime
+from selenium.webdriver.common.keys import Keys
 
 class SemanticFormFiller:
     def __init__(self):
@@ -20,16 +22,12 @@ class SemanticFormFiller:
         print("Model loaded successfully!")
         
         # Load user data
-        self.form_data = self.load_user_data()
+        with open('user_data.json', 'r') as f:
+            self.form_data = json.load(f)
         
         # Create embeddings for all field names
         self.field_embeddings = self.create_field_embeddings()
         
-    def load_user_data(self):
-        """Load user data from Adhithya_B.json"""
-        with open('Adhithya_B.json', 'r') as f:
-            return json.load(f)
-    
     def create_field_embeddings(self):
         """Create embeddings for all field names in the form data"""
         field_names = list(self.form_data.keys())
@@ -64,8 +62,9 @@ class SemanticFormFiller:
             chrome_options.add_argument('--disable-dev-shm-usage')
             
             service = Service()
-            driver = webdriver.Chrome(options=chrome_options)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
             return driver
+            
         except Exception as e:
             print(f"Error setting up Chrome driver: {str(e)}")
             print("Please make sure Chrome is installed on your system.")
@@ -99,17 +98,57 @@ class SemanticFormFiller:
             return "text"
     
     def fill_date_field(self, driver, element, date_str):
-        """Fill a date field"""
+        """Fill a date field in Google Forms"""
         try:
             # Parse the date string (assuming format: MM/DD/YYYY)
             date_obj = datetime.strptime(date_str, "%m/%d/%Y")
+            
+            # Find the date input field
+            date_input = element.find_element(By.XPATH, ".//input[@type='date']")
+            
+            # Format date as YYYY-MM-DD for the input field
             formatted_date = date_obj.strftime("%Y-%m-%d")
             
-            # Find the date input
-            date_input = element.find_element(By.XPATH, ".//input[@type='date']")
+            # Clear any existing value
             date_input.clear()
-            date_input.send_keys(formatted_date)
-            return True
+            
+            # Try to set the date directly first
+            try:
+                date_input.send_keys(formatted_date)
+                return True
+            except:
+                pass
+            
+            # If direct input fails, try clicking and using keyboard
+            try:
+                # Click the input field
+                date_input.click()
+                time.sleep(0.5)
+                
+                # Send the date parts separately
+                date_input.send_keys(str(date_obj.year))
+                date_input.send_keys(Keys.TAB)
+                date_input.send_keys(str(date_obj.month).zfill(2))
+                date_input.send_keys(Keys.TAB)
+                date_input.send_keys(str(date_obj.day).zfill(2))
+                return True
+            except:
+                pass
+            
+            # If keyboard input fails, try JavaScript
+            try:
+                driver.execute_script(
+                    "arguments[0].value = arguments[1];", 
+                    date_input, 
+                    formatted_date
+                )
+                return True
+            except:
+                pass
+            
+            print(f"Warning: Could not set date {date_str} using any method")
+            return False
+            
         except Exception as e:
             print(f"Error filling date field: {str(e)}")
             return False
@@ -120,19 +159,50 @@ class SemanticFormFiller:
             # Find all radio options
             radio_options = element.find_elements(By.XPATH, ".//div[@role='radio']")
             
-            # Try to find the matching option
+            # First try exact match
             for option in radio_options:
                 option_text = option.text.strip().lower()
-                if value.lower() in option_text:
+                if value.lower() == option_text:
                     option.click()
                     return True
             
-            # If no exact match, try to find the closest match
+            # Then try partial match
             for option in radio_options:
-                option_text = option.text.strip()
-                if self.find_best_match(option_text, threshold=0.7) == value:
+                option_text = option.text.strip().lower()
+                if value.lower() in option_text or option_text in value.lower():
                     option.click()
                     return True
+            
+            # If no direct match, try semantic matching
+            for option in radio_options:
+                option_text = option.text.strip()
+                similarity = util.pytorch_cos_sim(
+                    self.model.encode(option_text, convert_to_tensor=True),
+                    self.model.encode(value, convert_to_tensor=True)
+                ).item()
+                
+                if similarity > 0.7:  # High similarity threshold for radio buttons
+                    option.click()
+                    return True
+            
+            # If still no match, try to find the closest option
+            best_match = None
+            best_similarity = 0
+            
+            for option in radio_options:
+                option_text = option.text.strip()
+                similarity = util.pytorch_cos_sim(
+                    self.model.encode(option_text, convert_to_tensor=True),
+                    self.model.encode(value, convert_to_tensor=True)
+                ).item()
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = option
+            
+            if best_match and best_similarity > 0.5:  # Lower threshold for best match
+                best_match.click()
+                return True
             
             return False
         except Exception as e:
@@ -150,19 +220,50 @@ class SemanticFormFiller:
             # Find all options
             options = driver.find_elements(By.XPATH, "//div[@role='option']")
             
-            # Try to find the matching option
+            # First try exact match
             for option in options:
                 option_text = option.text.strip().lower()
-                if value.lower() in option_text:
+                if value.lower() == option_text:
                     option.click()
                     return True
             
-            # If no exact match, try to find the closest match
+            # Then try partial match
             for option in options:
-                option_text = option.text.strip()
-                if self.find_best_match(option_text, threshold=0.7) == value:
+                option_text = option.text.strip().lower()
+                if value.lower() in option_text or option_text in value.lower():
                     option.click()
                     return True
+            
+            # If no direct match, try semantic matching
+            for option in options:
+                option_text = option.text.strip()
+                similarity = util.pytorch_cos_sim(
+                    self.model.encode(option_text, convert_to_tensor=True),
+                    self.model.encode(value, convert_to_tensor=True)
+                ).item()
+                
+                if similarity > 0.7:  # High similarity threshold for dropdowns
+                    option.click()
+                    return True
+            
+            # If still no match, try to find the closest option
+            best_match = None
+            best_similarity = 0
+            
+            for option in options:
+                option_text = option.text.strip()
+                similarity = util.pytorch_cos_sim(
+                    self.model.encode(option_text, convert_to_tensor=True),
+                    self.model.encode(value, convert_to_tensor=True)
+                ).item()
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = option
+            
+            if best_match and best_similarity > 0.5:  # Lower threshold for best match
+                best_match.click()
+                return True
             
             return False
         except Exception as e:
@@ -295,29 +396,11 @@ class SemanticFormFiller:
                 else:
                     print(f"No matching field found for question: {question}")
             
-            # Try to find and click submit button
-            try:
-                print("\nLooking for submit button...")
-                submit_patterns = [
-                    "//div[@role='button']//span[contains(text(), 'Submit')]",
-                    "//div[@role='button']//span[contains(text(), 'Send')]",
-                    "//div[contains(@class, 'Y5sE8d')]//span[contains(text(), 'Submit')]"
-                ]
-                
-                for pattern in submit_patterns:
-                    try:
-                        submit_button = driver.find_element(By.XPATH, pattern)
-                        driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
-                        time.sleep(0.5)
-                        submit_button.click()
-                        print("Form submitted successfully!")
-                        break
-                    except NoSuchElementException:
-                        continue
-                
-            except Exception as e:
-                print(f"Error submitting form: {str(e)}")
-        
+            print("\nForm filling completed!")
+            print("Please review the filled form and submit it manually.")
+            print("Press Enter when you're done...")
+            input()
+            
         except Exception as e:
             print(f"Error filling form: {str(e)}")
         finally:
