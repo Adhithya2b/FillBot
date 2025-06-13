@@ -9,7 +9,6 @@ FillBot is an intelligent form-filling bot that uses semantic matching to automa
   - Text inputs
   - Radio buttons
   - Checkboxes
-  - Date pickers
   - Dropdown menus
   - Text areas
 - Intelligent field type detection
